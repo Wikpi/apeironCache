@@ -1,2 +1,5 @@
 all:
-	go run ./cmd/main.go
+	go run ./main.go
+
+client:
+	go run ./cmd/client/main.go
