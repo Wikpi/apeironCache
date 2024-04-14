@@ -1,14 +1,17 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
 	"log"
+	"net/http"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
-type model struct {
+type clientModel struct {
 	Id       int
 	Name     string
 	input    textinput.Model
@@ -20,8 +23,8 @@ type message struct {
 	Message string
 }
 
-func newClient() *model {
-	model := &model{
+func newClient() *clientModel {
+	model := &clientModel{
 		input: textinput.New(),
 	}
 	model.input.Placeholder = "Your text"
@@ -36,15 +39,15 @@ func newClient() *model {
 func main() {
 	newProgram := tea.NewProgram(newClient())
 	if _, err := newProgram.Run(); err != nil {
-		log.Fatal("Server is down")
+		log.Fatal("Could not start client")
 	}
 }
 
-func (m *model) Init() tea.Cmd {
+func (m *clientModel) Init() tea.Cmd {
 	return textinput.Blink
 }
 
-func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (m *clientModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 
 	switch key := msg.(type) {
@@ -52,13 +55,33 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch key.Type {
 		case tea.KeyEnter:
 			newMsg := m.input.Value()
+			m.input.SetValue("")
 
 			if newMsg == "" {
 				return m, nil
 			}
-			m.messages = append(m.messages, message{"User", newMsg})
 
-			m.input.SetValue("")
+			if m.Name == "" {
+				data, err := json.Marshal(newMsg)
+				if err != nil {
+					log.Fatal("Could not parse name to json")
+				}
+
+				req, err := http.NewRequest(http.MethodPost, "http://localhost:8080/register", bytes.NewBuffer(data))
+				if err != nil {
+					log.Fatal("Could not form name request")
+				}
+
+				res, err := http.DefaultClient.Do(req)
+				if err != nil {
+					log.Fatal("Could not send name request", err)
+				}
+
+				if res.StatusCode == http.StatusAccepted {
+					m.Name = newMsg
+				}
+				return m, nil
+			}
 		case tea.KeyCtrlC:
 			return m, tea.Quit
 		}
@@ -69,14 +92,11 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-func (m model) View() string {
+func (m clientModel) View() string {
 	ui := strings.Builder{}
 
-	ui.WriteString("\n")
-
-	for _, message := range m.messages {
-		ui.WriteString(message.Name + " " + message.Message + "\n")
-	}
+	ui.WriteString("Enter username: \n")
+	ui.WriteString(m.Name + "\n")
 
 	ui.WriteString("\n<------------------------------------->\n")
 
