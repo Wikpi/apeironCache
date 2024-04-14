@@ -12,15 +12,14 @@ import (
 )
 
 type clientModel struct {
-	Id       int
-	Name     string
-	input    textinput.Model
-	messages []message
+	name   string
+	input  textinput.Model
+	status string
 }
 
-type message struct {
-	Name    string
-	Message string
+type paste struct {
+	Name      string `json:"name"`
+	PasteBody string `json:"pasteBody"`
 }
 
 func newClient() *clientModel {
@@ -32,6 +31,8 @@ func newClient() *clientModel {
 	model.input.Width = 30
 
 	model.input.Focus()
+
+	model.status = "Please register"
 
 	return model
 }
@@ -57,11 +58,14 @@ func (m *clientModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			newMsg := m.input.Value()
 			m.input.SetValue("")
 
+			m.status = ""
+
 			if newMsg == "" {
+				m.status = "Invalid message"
 				return m, nil
 			}
 
-			if m.Name == "" {
+			if m.name == "" {
 				data, err := json.Marshal(newMsg)
 				if err != nil {
 					log.Fatal("Could not parse name to json")
@@ -78,9 +82,32 @@ func (m *clientModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 
 				if res.StatusCode == http.StatusAccepted {
-					m.Name = newMsg
+					m.status = "Registered successfully, welcome " + newMsg
+					m.name = newMsg
+				} else {
+					m.status = "Could not register, name in use"
 				}
-				return m, nil
+			} else {
+				data, err := json.Marshal(paste{m.name, newMsg})
+				if err != nil {
+					log.Fatal("Could not parse name to json")
+				}
+
+				req, err := http.NewRequest(http.MethodPost, "http://localhost:8080/paste", bytes.NewBuffer(data))
+				if err != nil {
+					log.Fatal("Could not form paste request")
+				}
+
+				res, err := http.DefaultClient.Do(req)
+				if err != nil {
+					log.Fatal("Could not send paste request", err)
+				}
+
+				if res.StatusCode == http.StatusAccepted {
+					m.status = "Pasted successfully"
+				} else {
+					m.status = "Could not paste"
+				}
 			}
 		case tea.KeyCtrlC:
 			return m, tea.Quit
@@ -95,8 +122,13 @@ func (m *clientModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m clientModel) View() string {
 	ui := strings.Builder{}
 
-	ui.WriteString("Enter username: \n")
-	ui.WriteString(m.Name + "\n")
+	ui.WriteString("\n" + m.status + "\n\n")
+
+	if m.name == "" {
+		ui.WriteString("Enter username: \n")
+	} else {
+		ui.WriteString("Enter message to paste: \n")
+	}
 
 	ui.WriteString("\n<------------------------------------->\n")
 
