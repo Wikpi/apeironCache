@@ -86,16 +86,6 @@ func (m *clientModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.status.message.WriteString("\n\nPress Enter to continue")
 
-			/*timer := *time.NewTimer(time.Minute)
-
-			go func() {
-				<-timer.C
-				timer.Stop()
-
-				m.status.message.Reset()
-				m.status.message.WriteString(getContinueMessage(m))
-			}()*/
-
 		case tea.KeyCtrlC:
 			return m, tea.Quit
 		}
@@ -216,14 +206,11 @@ func (m *clientModel) getClientRequest(code string) {
 		}
 		request := paste{}
 
-		// requestMessage := formatText(request.PasteBody)
-
 		if err := json.Unmarshal(body, &request); err != nil {
 			m.status.message.WriteString("Could not parse get response body")
 		}
-		requestMessage := request.PasteBody
 
-		m.status.message.WriteString("Paste request at " + code + ": \n\n" + requestMessage)
+		m.status.message.WriteString("Paste request at " + code + ": \n\n" + formatText(request.PasteBody))
 	} else {
 		m.status.message.WriteString("Could not paste")
 	}
@@ -233,10 +220,15 @@ func (m *clientModel) getClientRequest(code string) {
 func formatText(text string) string {
 	formatedText := strings.Builder{}
 
-	words := strings.Split(text, " ")
+	words := strings.Fields(text)
 
-	for i := 0; i < len(words); i += 16 {
-		formatedText.WriteString(strings.Join(words[i:i+15], " "))
+	for i := 0; i < len(words); i += 15 {
+		lineEnd := i + 15
+		if lineEnd > len(words) {
+			lineEnd = len(words)
+		}
+		formatedText.WriteString(strings.Join(words[i:lineEnd], " "))
+
 		formatedText.WriteString("\n")
 	}
 
