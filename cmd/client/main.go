@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
@@ -15,7 +16,13 @@ import (
 type clientModel struct {
 	name   string
 	input  textinput.Model
-	status string
+	status status
+	timer  time.Timer
+}
+
+type status struct {
+	name    string
+	message strings.Builder
 }
 
 type paste struct {
@@ -33,7 +40,9 @@ func newClient() *clientModel {
 
 	model.input.Focus()
 
-	model.status = "Please register"
+	model.timer = *time.NewTimer(0)
+
+	model.status.message.WriteString(getContinueMessage(model))
 
 	return model
 }
@@ -59,63 +68,37 @@ func (m *clientModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			newMsg := m.input.Value()
 			m.input.SetValue("")
 
-			m.status = ""
+			m.timer.Stop()
+			m.status.message.Reset()
 
 			if newMsg == "" {
-				m.status = "Invalid message"
+				m.status.message.WriteString(getContinueMessage(m))
 				return m, nil
 			}
 
-			if m.name == "" {
-				data, err := json.Marshal(newMsg)
-				if err != nil {
-					log.Fatal("Could not parse name to json")
-				}
+			command := strings.Split(newMsg, " ")[0]
+			newMsg = strings.Join(strings.Split(newMsg, " ")[1:], " ")
 
-				req, err := http.NewRequest(http.MethodPost, "http://localhost:8080/register", bytes.NewBuffer(data))
-				if err != nil {
-					log.Fatal("Could not form name request")
-				}
-
-				res, err := http.DefaultClient.Do(req)
-				if err != nil {
-					log.Fatal("Could not send name request", err)
-				}
-
-				if res.StatusCode == http.StatusAccepted {
-					m.status = "Registered successfully, welcome " + newMsg
-					m.name = newMsg
-				} else {
-					m.status = "Could not register, name in use"
-				}
-				res.Body.Close()
-			} else {
-				data, err := json.Marshal(paste{m.name, newMsg})
-				if err != nil {
-					log.Fatal("Could not parse name to json")
-				}
-
-				req, err := http.NewRequest(http.MethodPost, "http://localhost:8080/paste", bytes.NewBuffer(data))
-				if err != nil {
-					log.Fatal("Could not form paste request")
-				}
-
-				res, err := http.DefaultClient.Do(req)
-				if err != nil {
-					log.Fatal("Could not send paste request", err)
-				}
-
-				if res.StatusCode == http.StatusAccepted {
-					body, err := io.ReadAll(res.Body)
-					if err != nil {
-						log.Fatal("Could not parse response body")
-					}
-					m.status = "Pasted successfully at: " + string(body)
-				} else {
-					m.status = "Could not paste"
-				}
-				res.Body.Close()
+			switch command {
+			case "register":
+				m.registerClient(newMsg)
+			case "login":
+				m.loginClient(newMsg)
+			case "paste":
+				m.pasteClientRequest(newMsg)
+			case "get":
+				m.getClientRequest(newMsg)
 			}
+			m.status.message.WriteString(". Press Enter to continue")
+
+			m.timer = *time.NewTimer(time.Minute)
+
+			go func() {
+				<-m.timer.C
+				m.status.message.Reset()
+				m.status.message.WriteString(getContinueMessage(m))
+			}()
+
 		case tea.KeyCtrlC:
 			return m, tea.Quit
 		}
@@ -126,16 +109,95 @@ func (m *clientModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
+func getContinueMessage(m *clientModel) string {
+	message := strings.Builder{}
+
+	message.WriteString("Use ")
+
+	if m.name == "" {
+		message.WriteString("register, login, ")
+	}
+	message.WriteString("paste or get")
+
+	return message.String()
+}
+
+func (m *clientModel) registerClient(msg string) {
+	m.status.name = "register"
+
+	data, err := json.Marshal(msg)
+	if err != nil {
+		m.status.message.WriteString("Could not parse name to json")
+		return
+	}
+
+	req, err := http.NewRequest(http.MethodPost, "http://localhost:8080/register", bytes.NewBuffer(data))
+	if err != nil {
+		m.status.message.WriteString("Could not form name request")
+		return
+	}
+
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		m.status.message.WriteString("Could not send name request")
+		return
+	}
+
+	if res.StatusCode == http.StatusAccepted {
+		m.name = msg
+		m.status.message.WriteString("Registered successfully, welcome " + m.name)
+	} else {
+		m.status.message.WriteString("Could not register, name in use")
+	}
+	res.Body.Close()
+}
+
+func (m *clientModel) loginClient(_ string) {
+	m.status.name = "login"
+}
+
+func (m *clientModel) pasteClientRequest(msg string) {
+	m.status.name = "paste"
+
+	data, err := json.Marshal(paste{"name", msg})
+	if err != nil {
+		m.status.message.WriteString("Could not parse name to json")
+		return
+	}
+
+	req, err := http.NewRequest(http.MethodPost, "http://localhost:8080/paste", bytes.NewBuffer(data))
+	if err != nil {
+		m.status.message.WriteString("Could not form paste request")
+		return
+	}
+
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		m.status.message.WriteString("Could not send paste request")
+		return
+	}
+
+	if res.StatusCode == http.StatusAccepted {
+		body, err := io.ReadAll(res.Body)
+		if err != nil {
+			m.status.message.WriteString("Could not parse response body")
+			return
+		}
+		m.status.message.WriteString("Pasted successfully at: " + string(body))
+	} else {
+		m.status.message.WriteString("Could not paste")
+	}
+	res.Body.Close()
+}
+
+func (m *clientModel) getClientRequest(_ string) {
+	m.status.name = "get"
+}
+
 func (m clientModel) View() string {
 	ui := strings.Builder{}
 
-	ui.WriteString("\n" + m.status + "\n\n")
-
-	if m.name == "" {
-		ui.WriteString("Enter username: \n")
-	} else {
-		ui.WriteString("Enter message to paste: \n")
-	}
+	ui.WriteString("\n" + m.status.message.String() + "\n")
 
 	ui.WriteString("\n<------------------------------------->\n")
 
