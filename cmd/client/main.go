@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"log"
 	"net/http"
 	"strings"
@@ -87,6 +88,7 @@ func (m *clientModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				} else {
 					m.status = "Could not register, name in use"
 				}
+				res.Body.Close()
 			} else {
 				data, err := json.Marshal(paste{m.name, newMsg})
 				if err != nil {
@@ -104,10 +106,15 @@ func (m *clientModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 
 				if res.StatusCode == http.StatusAccepted {
-					m.status = "Pasted successfully"
+					body, err := io.ReadAll(res.Body)
+					if err != nil {
+						log.Fatal("Could not parse response body")
+					}
+					m.status = "Pasted successfully at: " + string(body)
 				} else {
 					m.status = "Could not paste"
 				}
+				res.Body.Close()
 			}
 		case tea.KeyCtrlC:
 			return m, tea.Quit

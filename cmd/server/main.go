@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -17,13 +18,14 @@ type serverModel struct {
 	mux *http.ServeMux
 
 	users  map[string]string
-	pastes []paste
+	pastes map[string]paste
 }
 
 func newServer() *serverModel {
 	model := &serverModel{}
 
 	model.users = make(map[string]string)
+	model.pastes = make(map[string]paste)
 
 	model.mux = http.NewServeMux()
 
@@ -56,20 +58,49 @@ func (s *serverModel) registerUser(w http.ResponseWriter, r *http.Request) {
 func (s *serverModel) handlePaste(w http.ResponseWriter, r *http.Request) {
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
-		w.WriteHeader(http.StatusNotAcceptable)
+		w.WriteHeader(http.StatusInternalServerError)
 		log.Println("Could not read request body")
 	}
 	var pastedMessage paste
 
 	if err := json.Unmarshal(body, &pastedMessage); err != nil {
-		w.WriteHeader(http.StatusNotAcceptable)
+		w.WriteHeader(http.StatusInternalServerError)
 		log.Println("Could not parse request")
 	}
 
-	s.pastes = append(s.pastes, pastedMessage)
+	code, err := generateCode(6)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		log.Println("Could not generate unique code")
+	}
 	w.WriteHeader(http.StatusAccepted)
 
-	log.Println(pastedMessage)
+	data, err := json.Marshal(code)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		log.Println("Could not parse client unique code to json")
+	}
+
+	w.Write(data)
+
+	log.Println("Pasted at: ", code, ", with: ", pastedMessage)
+}
+
+func generateCode(length int) (string, error) {
+	const codeChars = "1234567890"
+
+	buffer := make([]byte, length)
+
+	_, err := rand.Read(buffer)
+	if err != nil {
+		return "", err
+	}
+
+	for index := range buffer {
+		buffer[index] = codeChars[int(buffer[index])%len(codeChars)]
+	}
+
+	return string(buffer), nil
 }
 
 func main() {
