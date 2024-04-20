@@ -73,17 +73,46 @@ func (s *serverModel) handlePaste(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 		log.Println("Could not generate unique code")
 	}
-	w.WriteHeader(http.StatusAccepted)
+
+	s.pastes[code] = pastedMessage
 
 	data, err := json.Marshal(code)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		log.Println("Could not parse client unique code to json")
 	}
+	w.WriteHeader(http.StatusAccepted)
 
 	w.Write(data)
 
 	log.Println("Pasted at: ", code, ", with: ", pastedMessage)
+}
+
+func (s *serverModel) handleGet(w http.ResponseWriter, r *http.Request) {
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		log.Println("Could not read request body")
+	}
+	var code string
+
+	if err := json.Unmarshal(body, &code); err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		log.Println("Could not parse request")
+	}
+
+	getRequest := s.pastes[code]
+
+	data, err := json.Marshal(getRequest)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		log.Println("Could not parse client get request to json")
+	}
+	w.WriteHeader(http.StatusAccepted)
+
+	w.Write(data)
+
+	log.Println("Sent client get request via " + code + " code")
 }
 
 func generateCode(length int) (string, error) {
@@ -110,6 +139,7 @@ func main() {
 
 	server.mux.HandleFunc("/register", server.registerUser)
 	server.mux.HandleFunc("/paste", server.handlePaste)
+	server.mux.HandleFunc("/get", server.handleGet)
 
 	if err := http.ListenAndServe("localhost:8080", server.mux); err != nil {
 		log.Fatal("Could not start server")

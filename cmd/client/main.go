@@ -7,7 +7,6 @@ import (
 	"log"
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
@@ -17,7 +16,6 @@ type clientModel struct {
 	name   string
 	input  textinput.Model
 	status status
-	timer  time.Timer
 }
 
 type status struct {
@@ -39,8 +37,6 @@ func newClient() *clientModel {
 	model.input.Width = 30
 
 	model.input.Focus()
-
-	model.timer = *time.NewTimer(0)
 
 	model.status.message.WriteString(getContinueMessage(model))
 
@@ -68,7 +64,6 @@ func (m *clientModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			newMsg := m.input.Value()
 			m.input.SetValue("")
 
-			m.timer.Stop()
 			m.status.message.Reset()
 
 			if newMsg == "" {
@@ -89,15 +84,17 @@ func (m *clientModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "get":
 				m.getClientRequest(newMsg)
 			}
-			m.status.message.WriteString(". Press Enter to continue")
+			m.status.message.WriteString("\n\nPress Enter to continue")
 
-			m.timer = *time.NewTimer(time.Minute)
+			/*timer := *time.NewTimer(time.Minute)
 
 			go func() {
-				<-m.timer.C
+				<-timer.C
+				timer.Stop()
+
 				m.status.message.Reset()
 				m.status.message.WriteString(getContinueMessage(m))
-			}()
+			}()*/
 
 		case tea.KeyCtrlC:
 			return m, tea.Quit
@@ -161,7 +158,7 @@ func (m *clientModel) pasteClientRequest(msg string) {
 
 	data, err := json.Marshal(paste{"name", msg})
 	if err != nil {
-		m.status.message.WriteString("Could not parse name to json")
+		m.status.message.WriteString("Could not parse paste to json")
 		return
 	}
 
@@ -190,8 +187,60 @@ func (m *clientModel) pasteClientRequest(msg string) {
 	res.Body.Close()
 }
 
-func (m *clientModel) getClientRequest(_ string) {
+func (m *clientModel) getClientRequest(code string) {
 	m.status.name = "get"
+
+	data, err := json.Marshal(code)
+	if err != nil {
+		m.status.message.WriteString("Could not parse code to json")
+		return
+	}
+
+	req, err := http.NewRequest(http.MethodPost, "http://localhost:8080/get", bytes.NewBuffer(data))
+	if err != nil {
+		m.status.message.WriteString("Could not form get request")
+		return
+	}
+
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		m.status.message.WriteString("Could not send get request")
+		return
+	}
+
+	if res.StatusCode == http.StatusAccepted {
+		body, err := io.ReadAll(res.Body)
+		if err != nil {
+			m.status.message.WriteString("Could not read get response body")
+			return
+		}
+		request := paste{}
+
+		// requestMessage := formatText(request.PasteBody)
+
+		if err := json.Unmarshal(body, &request); err != nil {
+			m.status.message.WriteString("Could not parse get response body")
+		}
+		requestMessage := request.PasteBody
+
+		m.status.message.WriteString("Paste request at " + code + ": \n\n" + requestMessage)
+	} else {
+		m.status.message.WriteString("Could not paste")
+	}
+	res.Body.Close()
+}
+
+func formatText(text string) string {
+	formatedText := strings.Builder{}
+
+	words := strings.Split(text, " ")
+
+	for i := 0; i < len(words); i += 16 {
+		formatedText.WriteString(strings.Join(words[i:i+15], " "))
+		formatedText.WriteString("\n")
+	}
+
+	return formatedText.String()
 }
 
 func (m clientModel) View() string {
