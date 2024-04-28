@@ -9,23 +9,25 @@ import (
 	"net/http"
 )
 
-type paste struct {
-	Name      string `json:"name"`
-	PasteBody string `json:"pasteBody"`
+type upload struct {
+	User       string `json:"user"`
+	Type       string `json:"type"`
+	Size       string `json:"size"`
+	UploadBody []byte `json:"uploadBody"`
 }
 
 type serverModel struct {
 	mux *http.ServeMux
 
-	users  map[string]string
-	pastes map[string]paste
+	users   map[string]string
+	uploads map[string]upload
 }
 
 func newServer() *serverModel {
 	model := &serverModel{}
 
 	model.users = make(map[string]string)
-	model.pastes = make(map[string]paste)
+	model.uploads = make(map[string]upload)
 
 	model.mux = http.NewServeMux()
 
@@ -55,37 +57,40 @@ func (s *serverModel) registerUser(w http.ResponseWriter, r *http.Request) {
 	log.Println("New user ", name)
 }
 
-func (s *serverModel) handlePaste(w http.ResponseWriter, r *http.Request) {
+func (s *serverModel) handleUpload(w http.ResponseWriter, r *http.Request) {
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		log.Println("Could not read request body")
+		return
 	}
-	var pastedMessage paste
+	var newUpload upload
 
-	if err := json.Unmarshal(body, &pastedMessage); err != nil {
+	if err := json.Unmarshal(body, &newUpload); err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		log.Println("Could not parse request")
+		return
 	}
 
 	code, err := generateCode(6)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		log.Println("Could not generate unique code")
+		return
 	}
-
-	s.pastes[code] = pastedMessage
+	s.uploads[code] = newUpload
 
 	data, err := json.Marshal(code)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		log.Println("Could not parse client unique code to json")
+		return
 	}
 	w.WriteHeader(http.StatusAccepted)
 
 	w.Write(data)
 
-	log.Println("Pasted at: ", code, ", with: ", pastedMessage)
+	log.Println("Pasted at: ", code, ", with: ", newUpload)
 }
 
 func (s *serverModel) handleGet(w http.ResponseWriter, r *http.Request) {
@@ -101,7 +106,7 @@ func (s *serverModel) handleGet(w http.ResponseWriter, r *http.Request) {
 		log.Println("Could not parse request")
 	}
 
-	getRequest := s.pastes[code]
+	getRequest := s.uploads[code]
 
 	data, err := json.Marshal(getRequest)
 	if err != nil {
@@ -138,7 +143,7 @@ func main() {
 	fmt.Println("Running on localhost:8080")
 
 	server.mux.HandleFunc("/register", server.registerUser)
-	server.mux.HandleFunc("/paste", server.handlePaste)
+	server.mux.HandleFunc("/paste", server.handleUpload)
 	server.mux.HandleFunc("/get", server.handleGet)
 
 	if err := http.ListenAndServe("localhost:8080", server.mux); err != nil {

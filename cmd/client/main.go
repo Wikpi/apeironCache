@@ -3,19 +3,26 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"io"
 	"log"
 	"net/http"
+	"os"
 	"strings"
 
+	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
+const textFlag = "-t"
+const fileFlag = "-f"
+
 type clientModel struct {
-	name   string
-	input  textinput.Model
-	status status
+	name      string
+	textInput textinput.Model
+	textArea  textarea.Model
+	status    status
 }
 
 type status struct {
@@ -23,21 +30,30 @@ type status struct {
 	message strings.Builder
 }
 
-type paste struct {
-	Name      string `json:"name"`
-	PasteBody string `json:"pasteBody"`
+type upload struct {
+	User       string `json:"user"`
+	Type       string `json:"type"`
+	Size       string `json:"size"`
+	UploadBody []byte `json:"uploadBody"`
 }
 
 func newClient() *clientModel {
 	model := &clientModel{
-		input: textinput.New(),
+		textInput: textinput.New(),
+		textArea:  textarea.New(),
 	}
-	model.input.Placeholder = "Your text"
-	model.input.CharLimit = 256
-	model.input.Width = 30
+	model.textInput.Placeholder = "Your text"
+	model.textInput.CharLimit = 50
+	model.textInput.Width = 50
 
-	model.input.Focus()
+	model.textArea.Placeholder = "Your text"
+	model.textArea.CharLimit = 256
+	model.textArea.Prompt = "| "
+	model.textArea.SetWidth(30)
 
+	model.textInput.Focus()
+
+	model.status.name = "limbo"
 	model.status.message.WriteString(getContinueMessage(model))
 
 	return model
@@ -61,28 +77,50 @@ func (m *clientModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		switch key.Type {
 		case tea.KeyEnter:
-			newMsg := m.input.Value()
-			m.input.SetValue("")
+			newMsg := m.textInput.Value()
+			m.textInput.SetValue("")
 
 			m.status.message.Reset()
-
 			if newMsg == "" {
+				m.status.message.WriteString("No command.\n")
 				m.status.message.WriteString(getContinueMessage(m))
 				return m, nil
 			}
 
-			command := strings.Split(newMsg, " ")[0]
-			newMsg = strings.Join(strings.Split(newMsg, " ")[1:], " ")
+			words := strings.Split(newMsg, " ")
+
+			command := words[0]
 
 			switch command {
-			case "register":
+			case "r":
 				m.registerClient(newMsg)
-			case "login":
+			case "l":
 				m.loginClient(newMsg)
-			case "paste":
-				m.pasteClientRequest(newMsg)
-			case "get":
-				m.getClientRequest(newMsg)
+			case "p":
+				if len(words) < 2 {
+					m.status.message.WriteString("No flag.\n")
+					break
+				}
+				flag := words[1]
+
+				if len(words) < 3 {
+					m.status.message.WriteString("No input.\n")
+					break
+				}
+				input := strings.Join(words[2:], " ")
+
+				m.uploadData(input, flag)
+			case "g":
+				if len(words) < 2 {
+					m.status.message.WriteString("No code.\n")
+					break
+				}
+
+				code := strings.Join(words[1:], " ")
+
+				m.getClientRequest(code)
+			default:
+				m.status.message.WriteString("Incorrect command.\n")
 			}
 			m.status.message.WriteString("\n\nPress Enter to continue")
 
@@ -91,7 +129,7 @@ func (m *clientModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 
-	m.input, cmd = m.input.Update(msg)
+	m.textInput, cmd = m.textInput.Update(msg)
 
 	return m, cmd
 }
@@ -143,38 +181,81 @@ func (m *clientModel) loginClient(_ string) {
 	m.status.name = "login"
 }
 
-func (m *clientModel) pasteClientRequest(msg string) {
-	m.status.name = "paste"
+func (m *clientModel) uploadData(input string, flag string) error {
+	// m.status.name = "paste"
 
-	data, err := json.Marshal(paste{"name", msg})
+	// Prepares JSON data to upload to the server
+	data, err := m.prepareData(input, flag)
 	if err != nil {
-		m.status.message.WriteString("Could not parse paste to json")
-		return
+		return err
 	}
 
 	req, err := http.NewRequest(http.MethodPost, "http://localhost:8080/paste", bytes.NewBuffer(data))
 	if err != nil {
 		m.status.message.WriteString("Could not form paste request")
-		return
+		return err
 	}
 
 	res, err := http.DefaultClient.Do(req)
 	if err != nil {
 		m.status.message.WriteString("Could not send paste request")
-		return
+		return err
 	}
 
 	if res.StatusCode == http.StatusAccepted {
 		body, err := io.ReadAll(res.Body)
 		if err != nil {
 			m.status.message.WriteString("Could not parse response body")
-			return
+			return err
 		}
 		m.status.message.WriteString("Pasted successfully at: " + string(body))
 	} else {
 		m.status.message.WriteString("Could not paste")
 	}
 	res.Body.Close()
+
+	return nil
+}
+
+func (m *clientModel) prepareData(input string, flag string) ([]byte, error) {
+	newUpload := upload{}
+
+	switch flag {
+	case fileFlag:
+		file, err := os.ReadFile(input)
+		if err != nil {
+			m.status.message.WriteString("Could not open file.\n")
+			return nil, err
+		}
+		newUpload.UploadBody = file
+
+	case textFlag:
+		text, err := json.Marshal(input)
+		if err != nil {
+			m.status.message.WriteString("Could not parse upload text to json.\n")
+			return nil, err
+		}
+		newUpload.UploadBody = text
+	default:
+		m.status.message.WriteString("Incorrect flag.\n")
+		return nil, errors.New("Incorrect flag")
+	}
+
+	if m.name != "" {
+		newUpload.User = m.name
+	} else {
+		newUpload.User = "Anonymous"
+	}
+	newUpload.Type = flag
+	newUpload.Size = ""
+
+	data, err := json.Marshal(newUpload)
+	if err != nil {
+		m.status.message.WriteString("Could not parse upload data to json")
+		return nil, err
+	}
+
+	return data, nil
 }
 
 func (m *clientModel) getClientRequest(code string) {
@@ -204,13 +285,13 @@ func (m *clientModel) getClientRequest(code string) {
 			m.status.message.WriteString("Could not read get response body")
 			return
 		}
-		request := paste{}
+		request := upload{}
 
 		if err := json.Unmarshal(body, &request); err != nil {
 			m.status.message.WriteString("Could not parse get response body")
 		}
 
-		m.status.message.WriteString("Paste request at " + code + ": \n\n" + formatText(request.PasteBody))
+		m.status.message.WriteString("Paste request at " + code + ": \n\n" + formatText(string(request.UploadBody)))
 	} else {
 		m.status.message.WriteString("Could not paste")
 	}
@@ -242,7 +323,7 @@ func (m clientModel) View() string {
 
 	ui.WriteString("\n<------------------------------------->\n")
 
-	ui.WriteString(m.input.View())
+	ui.WriteString(m.textInput.View())
 
 	return ui.String()
 }
